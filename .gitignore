@@ -1,0 +1,24 @@
+# Generated builds and release artifacts
+/build/
+/dist/
+
+# Local backups, diagnostics and assistant memory — never publish
+/migration-backup/
+/CURRENT_TASK.md
+/COMMANDS_LOG.md
+/AI_INSTRUCTIONS.md
+/.ivol/
+/.lh/
+/.vscode/
+/.idea/
+
+# Local configuration and signing material
+.env
+.env.*
+*.p12
+*.pfx
+*.pem
+*.key
+*.mobileprovision
+*.log
+.DS_Store
