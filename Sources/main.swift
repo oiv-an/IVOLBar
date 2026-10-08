@@ -53,19 +53,23 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var lastError = ""
     let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/IVOLBar.log")
     var observers: [NSObjectProtocol] = []
+    var savedGroup: Set<String>?
+    var configuringGroup = false
+    var displaySettlesAfter = Date.distantPast
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let duplicates = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "pro.ivol.bar")
         guard duplicates.count <= 1 else { NSApp.terminate(nil); return }
         defaults.register(defaults: ["autoHide": false, "delay": 5.0])
         autoHide = defaults.bool(forKey: "autoHide")
+        savedGroup = defaults.stringArray(forKey: "hiddenBundleIDs").map { Set($0) }
         arrow = NSStatusBar.system.statusItem(withLength: 26)
         arrow.autosaveName = "IVOLBar.arrow"
         divider = NSStatusBar.system.statusItem(withLength: 18)
         divider.autosaveName = "IVOLBar.divider"
         divider.button?.title = "│"
-        divider.button?.toolTip = "Слева — всегда видно. Между полоской и стрелкой — скрывается. ⌘ + перетаскивание."
-        arrow.button?.toolTip = "Скрыть/раскрыть среднюю группу. Правая кнопка — настройки."
+        divider.button?.toolTip = "Настройка сохраняемой группы — через меню. Перемещение само по себе не меняет состав."
+        arrow.button?.toolTip = "Скрыть/раскрыть сохранённую группу. Правая кнопка — настройки."
         for item in [divider!, arrow!] {
             item.button?.target = self
             item.button?.action = #selector(clicked(_:))
@@ -86,15 +90,16 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.expand()
         })
         for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.willSleepNotification] {
-            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.expand() })
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.displayChanged() })
         }
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
-                                                               object: nil, queue: .main) { [weak self] _ in self?.expand() })
+                                                               object: nil, queue: .main) { [weak self] _ in self?.displayChanged() })
         log("Запуск \(Bundle.main.bundlePath); AX=\(AXIsProcessTrusted()); native=\(IVVisibilityAvailable())")
         if !defaults.bool(forKey: "introduced") {
             defaults.set(true, forKey: "introduced")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.instructions() }
         }
+        displaySettlesAfter = Date().addingTimeInterval(5)
         resetDeadline()
     }
 
@@ -118,7 +123,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
     func tick() {
-        if pointerInMenuBar() || menuOpen || NSEvent.pressedMouseButtons != 0 || NSEvent.modifierFlags.contains(.command) {
+        if configuringGroup || Date() < displaySettlesAfter || pointerInMenuBar() || menuOpen || NSEvent.pressedMouseButtons != 0 || NSEvent.modifierFlags.contains(.command) {
             resetDeadline(); return
         }
         if autoHide && assertion == nil && !busy && Date() >= deadline && Date() >= retryAfter { collapse(manual: false) }
@@ -126,6 +131,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func clicked(_ sender: NSStatusBarButton) {
         if NSApp.currentEvent?.type == .rightMouseUp || sender === divider.button { showMenu(); return }
         if assertion != nil || busy { expand() } else { collapse(manual: true) }
+    }
+    func displayChanged() {
+        // Keep the selected membership even while macOS rebuilds/reorders its bars.
+        displaySettlesAfter = Date().addingTimeInterval(5)
+        expand()
+        log("Экран изменился: сохранённая группа не меняется")
     }
     func expand() {
         generation += 1
@@ -146,8 +157,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         log("ОТКАЗ: \(message)")
         if manual { alert(message) }
     }
-    func collapse(manual: Bool) {
+    func collapse(manual: Bool, captureGroup: Bool = false) {
         guard assertion == nil && !busy else { return }
+        guard Date() >= displaySettlesAfter else { return }
+        if configuringGroup && !captureGroup {
+            if manual { alert("Закончите расстановку и выберите «Сохранить группу по расположению» в меню.") }
+            return
+        }
         guard AXIsProcessTrusted() else {
             if manual {
                 let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -165,14 +181,26 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let own = Bundle.main.bundleIdentifier ?? "pro.ivol.bar"
         knownBundleIDs = Set(records.map(\.id))
-        // Rebuild membership from live items on every collapse. Installation
-        // paths and other apps' updates must not veto the whole operation.
+        // Once configured, membership is independent of transient display geometry.
+        // Only an explicit configuration action may replace it.
+        let selectedGroup = captureGroup ? nil : savedGroup
         busy = true
         generation += 1
         let token = generation
         updateArrow()
         DispatchQueue.global(qos: .userInitiated).async {
             let beforeHosted = hostedItems()
+            if let selectedGroup {
+                let runningIDs = Set(records.map(\.id))
+                let hidden = selectedGroup.intersection(runningIDs).subtracting([own])
+                    .filter { !$0.hasPrefix("com.apple.") }
+                let result = Scan(hidden: Set(hidden), allowed: runningIDs.subtracting(hidden),
+                                  lines: ["Сохранённая группа: \(selectedGroup.sorted())"])
+                DispatchQueue.main.async {
+                    self.activate(result, beforeHosted: beforeHosted, token: token, manual: manual)
+                }
+                return
+            }
             let ownItems = (beforeHosted ?? []).filter { $0.owner == own }
             // AppKit status-item windows can refer to the inactive/notched display.
             // Both items have different fixed widths (divider 18, arrow 26 + host padding).
@@ -216,37 +244,66 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 guard self.generation == token else { return }
                 self.log("Границы \(left) / \(right)\n" + result.lines.joined(separator: "\n"))
-                guard let beforeHosted else {
-                    self.fail("Не удалось прочитать системную строку меню для проверки результата. Скрытие отменено.", manual: manual)
-                    return
-                }
-                let protectedOwners = Set(beforeHosted.map(\.owner)).subtracting(result.hidden)
-                guard !result.hidden.isEmpty else {
-                    self.fail("Между полоской и стрелкой нет приложений, которые можно уверенно скрыть. Перетащите туда значки с ⌘. Нераспознанные и системные значки оставляются видимыми.", manual: manual)
-                    return
-                }
-                IVActivateVisibility(Array(result.allowed).sorted()) { a, error in
-                    guard self.generation == token else { if let a { IVReleaseVisibility(a) }; return }
-                    guard let a, error == nil else { self.fail(error ?? "Ошибка скрытия", manual: manual); return }
-                    self.assertion = a
-                    self.busy = false
-                    self.lastError = ""
-                    self.retryAfter = .distantPast
-                    self.updateArrow()
-                    self.log("Запрос принят macOS (\(manual ? "ручное скрытие" : "автоскрытие")): скрыть=\(result.hidden.sorted()); оставить=\(protectedOwners.sorted()). AX не доказывает видимость — нужна проверка изображения.")
-                    if ProcessInfo.processInfo.environment["IVOLBAR_DIAGNOSTIC"] == "1" {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                            guard self.generation == token else { return }
-                            self.log("Диагностический таймер: восстановление через 5 секунд")
-                            self.expand()
-                        }
-                        return
-                    }
-                    // Hidden host nodes retain stale frames on macOS 27. Do not use
-                    // their presence as evidence that the native restriction failed.
-                }
+                self.activate(result, beforeHosted: beforeHosted, token: token, manual: manual, captureGroup: captureGroup)
             }
         }
+    }
+    func activate(_ result: Scan, beforeHosted: [HostedItem]?, token: Int, manual: Bool, captureGroup: Bool = false) {
+        guard generation == token else { return }
+        guard let beforeHosted else {
+            self.fail("Не удалось прочитать системную строку меню для проверки результата. Скрытие отменено.", manual: manual)
+            return
+        }
+        let protectedOwners = Set(beforeHosted.map(\.owner)).subtracting(result.hidden)
+        guard !result.hidden.isEmpty else {
+            if captureGroup {
+                self.fail("Между границами не найдена группа. Прежний состав сохранён; настройка остаётся открытой.", manual: manual)
+            } else if savedGroup != nil {
+                busy = false
+                retryAfter = Date().addingTimeInterval(30)
+                updateArrow()
+                if manual { alert("Сохранённая группа пуста или её приложения сейчас не запущены. Состав группы можно изменить через меню.") }
+            } else {
+                self.fail("Группа ещё не настроена. Выберите «Настроить группу по расположению…» в меню.", manual: manual)
+            }
+            return
+        }
+        IVActivateVisibility(Array(result.allowed).sorted()) { a, error in
+            guard self.generation == token else { if let a { IVReleaseVisibility(a) }; return }
+            guard let a, error == nil else { self.fail(error ?? "Ошибка скрытия", manual: manual); return }
+            self.assertion = a
+            self.busy = false
+            self.lastError = ""
+            self.retryAfter = .distantPast
+            self.updateArrow()
+            if captureGroup || self.savedGroup == nil {
+                self.savedGroup = result.hidden
+                self.defaults.set(result.hidden.sorted(), forKey: "hiddenBundleIDs")
+                self.configuringGroup = false
+                self.log("Группа сохранена: \(result.hidden.sorted())")
+            }
+            self.log("Запрос принят macOS (\(manual ? "ручное скрытие" : "автоскрытие")): скрыть=\(result.hidden.sorted()); оставить=\(protectedOwners.sorted()). AX не доказывает видимость — нужна проверка изображения.")
+            if ProcessInfo.processInfo.environment["IVOLBAR_DIAGNOSTIC"] == "1" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                    guard self.generation == token else { return }
+                    self.log("Диагностический таймер: восстановление через 5 секунд")
+                    self.expand()
+                }
+                return
+            }
+            // Hidden host nodes retain stale frames on macOS 27. Do not use
+            // their presence as evidence that the native restriction failed.
+        }
+    }
+    @objc func beginGroupConfiguration() {
+        configuringGroup = true
+        expand()
+        alert("Расставьте значки между полоской и стрелкой с ⌘, затем выберите «Сохранить группу по расположению». До сохранения автоскрытие приостановлено, прежний состав не меняется.")
+    }
+    @objc func saveGroupConfiguration() { collapse(manual: true, captureGroup: true) }
+    @objc func cancelGroupConfiguration() {
+        configuringGroup = false
+        resetDeadline()
     }
     func alert(_ message: String) {
         NSApp.activate(ignoringOtherApps: true)
@@ -260,7 +317,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         resetDeadline()
     }
     @objc func instructions() {
-        alert("Всегда видно  │  скрываемые значки  ‹  всегда видно\n\nЗажмите ⌘ и расположите полоску левее стрелки. Перетаскивайте значки между ними — только эта группа скрывается. Нажатие стрелки скрывает/раскрывает; правая кнопка открывает настройки.\n\nАвтоскрытие изначально выключено для безопасной настройки. Его можно включить в меню. Системные значки остаются видимыми. Если у приложения несколько значков и хотя бы один находится снаружи, остаётся видимым всё приложение.")
+        alert("Группа сохраняется независимо от сна и расположения экранов. Стрелка скрывает/раскрывает сохранённую группу; правая кнопка открывает меню.\n\nДля изменения состава: «Настроить группу по расположению…», расставьте значки с ⌘ между полоской слева и стрелкой справа, затем «Сохранить группу по расположению». Простое перемещение значков вне режима настройки не меняет состав. Системные значки не скрываются. Если при настройке хотя бы один значок приложения снаружи, приложение остаётся видимым.")
     }
     @objc func toggleAuto() {
         autoHide.toggle()
@@ -283,6 +340,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return item
         }
         _ = add("Показать всё", #selector(reveal))
+        if configuringGroup {
+            _ = add("Сохранить группу по расположению", #selector(saveGroupConfiguration))
+            _ = add("Отменить настройку группы", #selector(cancelGroupConfiguration))
+        } else {
+            _ = add("Настроить группу по расположению…", #selector(beginGroupConfiguration))
+        }
         let auto = add("Автоскрытие после ухода мыши", #selector(toggleAuto))
         auto.state = autoHide ? .on : .off
         let delay = NSMenuItem(title: "Задержка", action: nil, keyEquivalent: "")

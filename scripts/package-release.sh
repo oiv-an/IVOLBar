@@ -39,8 +39,11 @@ Ad-hoc signed. NOT Developer ID signed or notarized by Apple.
 Move IVOL Bar.app to Applications, then open it. If macOS blocks the first
 launch, review System Settings > Privacy & Security > Open Anyway, only if
 you trust this download. Do not disable Gatekeeper globally.
-Grant Accessibility access when prompted. Command-drag the divider to the
-left of the arrow and place the icons to hide between them. Click the arrow.
+Grant Accessibility access when prompted. Open the divider/right-click menu,
+choose "Настроить группу по расположению…", then Command-drag the divider
+to the left of the arrow and place the icons to hide between them. Choose
+"Сохранить группу по расположению" to save. Membership persists independently
+of display geometry; dragging outside configuration mode does not change it.
 Auto-hide is OFF in a new profile; enable it from the divider/right-click menu.
 Quit the old IVOL Bar before replacing an existing installation.
 

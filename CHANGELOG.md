@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.2 — 2026-10-08
+
+- Persist hidden application membership independently of menu bar geometry. Display wake/reconnection and relaunch no longer recalculate an established group from displaced markers.
+- Add explicit configure/save/cancel actions; failed configuration retains the previous membership. Auto-hide pauses during configuration and display transitions.
+- Physical icon order remains managed by macOS; duplicate-app visibility limitations remain unchanged.
+
+### Verification / Проверка
+
+- Collapse, reveal and auto-hide were visually checked on an equivalent locally signed build with adjacent markers. A later display-change event reused the same saved membership according to the runtime log; that event was not visually observed. A controlled sleep/reconnect cycle and GUI saving of a new group were not tested.
+- Public ZIP: Apple Silicon, macOS 27+, ad-hoc signed, not notarized. Physical icon order and private-API duplicate-app limitations are unchanged.
+- По-русски: состав скрываемой группы теперь сохраняется отдельно от координат. Сон и смена экранов не переписывают его. Для изменения состава используйте «Настроить группу по расположению…», затем «Сохранить группу по расположению»; обычное перетаскивание вне режима настройки не меняет состав.
+
 ## 0.1.1 — 2026-10-08
 
 ### Fixed
