@@ -34,7 +34,7 @@ Older macOS versions are not supported. Availability of the private framework is
 
 ## Install the release
 
-1. Download `IVOL-Bar-0.1.2-macos-arm64.zip` and `SHA256SUMS.txt` from [Releases](https://github.com/oiv-an/IVOLBar/releases/latest).
+1. Download `IVOL-Bar-0.1.3-macos-arm64.zip` and `SHA256SUMS.txt` from [Releases](https://github.com/oiv-an/IVOLBar/releases/latest).
 2. Optionally verify the archive in the download folder:
 
    ```sh
@@ -108,7 +108,7 @@ On an Apple Silicon Mac with the required toolchain:
 /bin/zsh scripts/package-release.sh
 ```
 
-This makes a fresh, ad-hoc-signed build and writes a ZIP and SHA-256 checksum to `dist/0.1.2/`. It neither installs the result nor uploads anything. See [release checklist](docs/RELEASING.md).
+This makes a fresh, ad-hoc-signed build and writes a ZIP and SHA-256 checksum to `dist/0.1.3/`. It neither installs the result nor uploads anything. See [release checklist](docs/RELEASING.md).
 
 ## Usage
 

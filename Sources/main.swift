@@ -56,6 +56,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var savedGroup: Set<String>?
     var configuringGroup = false
     var displaySettlesAfter = Date.distantPast
+    var recoveryPending = false
+    var displaysSleeping = false
+    var recoveryDeadline: TimeInterval = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let duplicates = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "pro.ivol.bar")
@@ -63,6 +66,19 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         defaults.register(defaults: ["autoHide": false, "delay": 5.0])
         autoHide = defaults.bool(forKey: "autoHide")
         savedGroup = defaults.stringArray(forKey: "hiddenBundleIDs").map { Set($0) }
+        createStatusItems()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
+        installObservers()
+        log("Запуск \(Bundle.main.bundlePath); AX=\(AXIsProcessTrusted()); native=\(IVVisibilityAvailable())")
+        if !defaults.bool(forKey: "introduced") {
+            defaults.set(true, forKey: "introduced")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.instructions() }
+        }
+        displaySettlesAfter = Date().addingTimeInterval(5)
+        resetDeadline()
+    }
+
+    func createStatusItems() {
         arrow = NSStatusBar.system.statusItem(withLength: 26)
         arrow.autosaveName = "IVOLBar.arrow"
         divider = NSStatusBar.system.statusItem(withLength: 18)
@@ -76,7 +92,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         updateArrow()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
+    }
+
+    func installObservers() {
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.didLaunchApplicationNotification,
                                             object: nil, queue: .main) { [weak self] notification in
@@ -89,18 +107,20 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.log("Новое приложение: \(id); пересчёт группы")
             self.expand()
         })
-        for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.willSleepNotification] {
-            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.displayChanged() })
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.displaysSleeping = true
+                self?.displayChanged()
+            })
+        }
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.displaysSleeping = false
+                self?.displayChanged()
+            })
         }
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                                object: nil, queue: .main) { [weak self] _ in self?.displayChanged() })
-        log("Запуск \(Bundle.main.bundlePath); AX=\(AXIsProcessTrusted()); native=\(IVVisibilityAvailable())")
-        if !defaults.bool(forKey: "introduced") {
-            defaults.set(true, forKey: "introduced")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.instructions() }
-        }
-        displaySettlesAfter = Date().addingTimeInterval(5)
-        resetDeadline()
     }
 
     func log(_ text: String) {
@@ -123,6 +143,15 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
     func tick() {
+        if recoveryPending || displaysSleeping {
+            resetDeadline()
+            guard !displaysSleeping, ProcessInfo.processInfo.systemUptime >= recoveryDeadline,
+                  !NSScreen.screens.isEmpty, !configuringGroup, !menuOpen,
+                  !pointerInMenuBar(), NSEvent.pressedMouseButtons == 0,
+                  !NSEvent.modifierFlags.contains(.command) else { return }
+            rebuildStatusItems()
+            return
+        }
         if configuringGroup || Date() < displaySettlesAfter || pointerInMenuBar() || menuOpen || NSEvent.pressedMouseButtons != 0 || NSEvent.modifierFlags.contains(.command) {
             resetDeadline(); return
         }
@@ -133,10 +162,27 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if assertion != nil || busy { expand() } else { collapse(manual: true) }
     }
     func displayChanged() {
-        // Keep the selected membership even while macOS rebuilds/reorders its bars.
-        displaySettlesAfter = Date().addingTimeInterval(5)
+        // Debounce display reconnection; never rebuild while the displays sleep.
+        recoveryPending = true
+        recoveryDeadline = ProcessInfo.processInfo.systemUptime + 10
+        displaySettlesAfter = Date().addingTimeInterval(10)
         expand()
-        log("Экран изменился: сохранённая группа не меняется")
+        log("Экран изменился: восстановление элементов после 10 секунд стабильности; сон=\(displaysSleeping)")
+    }
+    func rebuildStatusItems() {
+        recoveryPending = false
+        expand()
+        // Detach autosave names before removal so AppKit cannot erase their positions.
+        for item in [arrow!, divider!] {
+            item.autosaveName = nil
+            NSStatusBar.system.removeStatusItem(item)
+        }
+        arrow = nil
+        divider = nil
+        createStatusItems()
+        displaySettlesAfter = Date().addingTimeInterval(2)
+        resetDeadline()
+        log("Элементы IVOL Bar пересозданы после стабилизации экранов; группа и настройки сохранены")
     }
     func expand() {
         generation += 1
@@ -159,7 +205,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     func collapse(manual: Bool, captureGroup: Bool = false) {
         guard assertion == nil && !busy else { return }
-        guard Date() >= displaySettlesAfter else { return }
+        guard !recoveryPending, !displaysSleeping, Date() >= displaySettlesAfter else { return }
         if configuringGroup && !captureGroup {
             if manual { alert("Закончите расстановку и выберите «Сохранить группу по расположению» в меню.") }
             return

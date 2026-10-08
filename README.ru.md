@@ -34,7 +34,7 @@ IVOL Bar — небольшая открытая утилита для стро�
 
 ## Установка готовой версии
 
-1. В разделе [Releases](https://github.com/oiv-an/IVOLBar/releases/latest) скачайте `IVOL-Bar-0.1.2-macos-arm64.zip` и `SHA256SUMS.txt`.
+1. В разделе [Releases](https://github.com/oiv-an/IVOLBar/releases/latest) скачайте `IVOL-Bar-0.1.3-macos-arm64.zip` и `SHA256SUMS.txt`.
 2. При необходимости проверьте архив командой из папки загрузки:
 
    ```sh
@@ -108,7 +108,7 @@ IVOL_BUILD_DIR="$PWD/build/custom" /bin/zsh build.sh
 /bin/zsh scripts/package-release.sh
 ```
 
-Скрипт создаёт свежую ad-hoc-сборку, ZIP и SHA-256 в `dist/0.1.2/`. Ничего не устанавливает и не отправляет на сервер. Для сопровождающих есть [чек-лист выпуска](docs/RELEASING.md).
+Скрипт создаёт свежую ad-hoc-сборку, ZIP и SHA-256 в `dist/0.1.3/`. Ничего не устанавливает и не отправляет на сервер. Для сопровождающих есть [чек-лист выпуска](docs/RELEASING.md).
 
 ## Управление
 

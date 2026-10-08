@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.3 — 2026-10-09
+
+- Recover IVOL Bar's arrow and divider after wake/display changes by recreating them once after 10 seconds without further display events. Each event restarts the wait.
+- Defer recovery while asleep, configuring the group, using the menu, hovering over the menu bar or holding mouse buttons/Command. Resume normal auto-hide after recovery; retain existing autosave names and saved membership.
+- Only IVOL Bar's own items are recreated; other applications and the system menu bar process are not restarted.
+- После пробуждения стрелка и разделитель восстанавливаются с задержкой 10 секунд после последнего изменения экранов. Настройки группы и автоскрытия сохраняются; другие приложения не затрагиваются.
+
+### Verification / Проверка
+
+- Equivalent locally signed build: compilation, signature, launch, auto-hide and external-display arrow checked; preferences before/after installation matched byte-for-byte.
+- A real sleep/wake cycle and the delayed recreation path have not yet been exercised. Released with this limitation explicitly acknowledged; recovery across all display setups is not guaranteed.
+- Public ZIP: Apple Silicon, macOS 27+, ad-hoc signed, not notarized. Existing private-API and duplicate-application limitations remain.
+
 ## 0.1.2 — 2026-10-08
 
 - Persist hidden application membership independently of menu bar geometry. Display wake/reconnection and relaunch no longer recalculate an established group from displaced markers.
