@@ -11,7 +11,7 @@ xcrun swiftc -swift-version 5 -O -module-cache-path "$OUT/modules" -import-objc-
 import plistlib,sys
 from pathlib import Path
 p=Path(sys.argv[1])/'Contents/Info.plist'
-p.write_bytes(plistlib.dumps({'CFBundleIdentifier':'pro.ivol.bar','CFBundleName':'IVOL Bar','CFBundleDisplayName':'IVOL Bar','CFBundleExecutable':'IVOLBar','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.1.0','CFBundleVersion':'1','LSUIElement':True,'LSMinimumSystemVersion':'27.0','NSHighResolutionCapable':True,'NSAccessibilityUsageDescription':'Определение расположения значков для скрытия только средней группы.'}))
+p.write_bytes(plistlib.dumps({'CFBundleIdentifier':'pro.ivol.bar','CFBundleName':'IVOL Bar','CFBundleDisplayName':'IVOL Bar','CFBundleExecutable':'IVOLBar','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.1.1','CFBundleVersion':'2','LSUIElement':True,'LSMinimumSystemVersion':'27.0','NSHighResolutionCapable':True,'NSAccessibilityUsageDescription':'Определение расположения значков для скрытия только средней группы.'}))
 PY
 # Stable local development identity, if present; no security settings are changed.
 IDENTITY="${IVOL_SIGN_IDENTITY:--}"

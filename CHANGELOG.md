@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.1 — 2026-10-08
+
+### Fixed
+
+- Removed the global collapse refusal when macOS resolves another installed copy of a running application. An application-path mismatch no longer blocks the entire group.
+- Group membership continues to be recalculated from current menu bar positions on each collapse; no stored installation-path binding is required.
+- Existing auto-hide settings and status-item placement are preserved.
+
+### Known limitations and verification
+
+- The private macOS allowlist can still hide a conflicting or development-folder app outside the middle group. This release does not fix that system behavior. In the verified local configuration, launching the current affected app from Applications restored its visibility; removing an old copy alone did not suffice. A later launch from an extension folder may reproduce the issue.
+- Collapse, expansion and auto-hide were visually checked on macOS 27.0.1 using an equivalent locally signed build. The public archive is separately validated, ad-hoc signed and **not notarized**.
+
+### По-русски
+
+Устранена общая блокировка сворачивания при несовпадении запущенной и выбранной macOS копий приложения. Группа пересчитывается по текущему расположению; настройки автоскрытия и расстановка сохраняются.
+
+Ограничение macOS остаётся: конфликтующая копия может скрываться даже вне группы. В проверенной конфигурации помог запуск актуальной версии затронутого приложения из Applications; одного удаления старой версии было недостаточно. Это локальный обход, не автоматическое исправление сторонних приложений в данном релизе.
+
 ## 0.1.0 — 2026-10-07
 
 First public, experimental release for **macOS 27 / Apple Silicon**.

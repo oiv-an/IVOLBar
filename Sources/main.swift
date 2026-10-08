@@ -10,7 +10,6 @@ struct AppRecord {
 struct Scan {
     var hidden = Set<String>()
     var allowed = Set<String>()
-    var protectedPIDs: [pid_t] = []
     var lines: [String] = []
 }
 
@@ -166,6 +165,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let own = Bundle.main.bundleIdentifier ?? "pro.ivol.bar"
         knownBundleIDs = Set(records.map(\.id))
+        // Rebuild membership from live items on every collapse. Installation
+        // paths and other apps' updates must not veto the whole operation.
         busy = true
         generation += 1
         let token = generation
@@ -205,7 +206,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // Boundaries and items now come from the same host window/display.
                 let middle = positions.allSatisfy { $0.minX >= left.maxX - 2 && $0.maxX <= right.minX + 2 }
                 if middle { scan.hidden.insert(app.id) }
-                else { outside.insert(app.id); scan.protectedPIDs.append(app.pid) }
+                else { outside.insert(app.id) }
                 scan.lines.append("\(middle ? "HIDE" : "KEEP") \(app.id) \(positions)")
             }
             scan.hidden.subtract(outside)
@@ -215,14 +216,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 guard self.generation == token else { return }
                 self.log("Границы \(left) / \(right)\n" + result.lines.joined(separator: "\n"))
-                let mismatches = records.filter { app in
-                    guard result.protectedPIDs.contains(app.pid) else { return false }
-                    let resolved = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.id)?.resolvingSymlinksInPath().path
-                    return resolved != URL(fileURLWithPath: app.path).resolvingSymlinksInPath().path
-                }
-                for app in mismatches {
-                    self.log("IDENTITY MISMATCH \(app.id): running=\(app.path); resolved=\(NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.id)?.path ?? "nil")")
-                }
                 guard let beforeHosted else {
                     self.fail("Не удалось прочитать системную строку меню для проверки результата. Скрытие отменено.", manual: manual)
                     return
@@ -230,10 +223,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let protectedOwners = Set(beforeHosted.map(\.owner)).subtracting(result.hidden)
                 guard !result.hidden.isEmpty else {
                     self.fail("Между полоской и стрелкой нет приложений, которые можно уверенно скрыть. Перетащите туда значки с ⌘. Нераспознанные и системные значки оставляются видимыми.", manual: manual)
-                    return
-                }
-                guard mismatches.isEmpty else {
-                    self.fail("macOS находит другую установленную копию: \(mismatches.map(\.name).joined(separator: ", ")). Скрытие отменено во избежание потери значков.", manual: manual)
                     return
                 }
                 IVActivateVisibility(Array(result.allowed).sorted()) { a, error in

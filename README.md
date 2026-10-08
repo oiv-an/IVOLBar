@@ -34,7 +34,7 @@ Older macOS versions are not supported. Availability of the private framework is
 
 ## Install the release
 
-1. Download `IVOL-Bar-0.1.0-macos-arm64.zip` and `SHA256SUMS.txt` from [Releases](https://github.com/oiv-an/IVOLBar/releases/latest).
+1. Download `IVOL-Bar-0.1.1-macos-arm64.zip` and `SHA256SUMS.txt` from [Releases](https://github.com/oiv-an/IVOLBar/releases/latest).
 2. Optionally verify the archive in the download folder:
 
    ```sh
@@ -108,7 +108,7 @@ On an Apple Silicon Mac with the required toolchain:
 /bin/zsh scripts/package-release.sh
 ```
 
-This makes a fresh, ad-hoc-signed build and writes a ZIP and SHA-256 checksum to `dist/0.1.0/`. It neither installs the result nor uploads anything. See [release checklist](docs/RELEASING.md).
+This makes a fresh, ad-hoc-signed build and writes a ZIP and SHA-256 checksum to `dist/0.1.1/`. It neither installs the result nor uploads anything. See [release checklist](docs/RELEASING.md).
 
 ## Usage
 
@@ -138,7 +138,7 @@ Important limitations:
 
 - **Per application, not per individual icon.** If an application has multiple icons and any is outside the group, the application is kept visible.
 - System menu items are requested to remain visible; private system behavior may still differ between macOS versions.
-- Applications launched from development folders or duplicate installations can interact poorly with macOS application resolution. Install them in Applications where appropriate. IVOL Bar refuses some ambiguous configurations rather than knowingly hide a protected icon.
+- Updates, changed paths and duplicate installations of other apps do not block the entire group from collapsing. Membership is recalculated from current positions on every collapse, without saved installation-path bindings. However, macOS can still hide a conflicting copy outside the group. Expand using the arrow to access it. Dragging sets a new position but does not by itself guarantee resolution of the system's duplicate-app conflict.
 - Compatibility is not universal. Unexpected disappearing icons have been observed with some third-party utilities, including noTunes. Do not depend on IVOL Bar to keep a critical control visible without checking it yourself.
 - Independent per-display layouts are not supported. The app selects a valid pair of markers with the largest gap. Notched displays and unusual multi-monitor arrangements may prevent a valid group being found.
 - IVOL Bar protects its own open menu from auto-hide; arbitrary third-party menus are not guaranteed to be protected.
