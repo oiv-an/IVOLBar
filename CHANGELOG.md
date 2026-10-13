@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.4 — 2026-10-13
+
+- Use one divider: hide identified applications on its left, keep applications on its right. The arrow is only a toggle; its position does not affect membership. Historical membership is ignored.
+- Use one coherent menu bar; remove the cross-display veto that incorrectly emptied the hidden group after rearrangement. Allow hosted owners omitted by Workspace.
+- Track running instances (PID, launch date, executable path); reveal when an icon owner is replaced or quits.
+- Add a confirmation-protected reset menu action: release hiding, clear IVOL Bar preferences and enter persistent arrangement mode. On macOS 27 the system keeps the arrow/divider positions itself, so they may stay in place.
+- Known macOS 27 limitation: the native hiding mechanism hides apps that run outside /Applications even when they are allowed. IVOL Bar now shows such kept apps in its menu and log. Fix: run the app from /Applications (IVOL Cataloger 0.7.20 does this automatically).
+
 ## 0.1.3 — 2026-10-09
 
 - Recover IVOL Bar's arrow and divider after wake/display changes by recreating them once after 10 seconds without further display events. Each event restarts the wait.

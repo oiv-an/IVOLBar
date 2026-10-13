@@ -11,6 +11,8 @@ struct Scan {
     var hidden = Set<String>()
     var allowed = Set<String>()
     var lines: [String] = []
+    // Kept apps running outside /Applications: macOS 27 hides them anyway.
+    var outsideApplications: [String] = []
 }
 
 func axValue(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
@@ -43,6 +45,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var arrow: NSStatusItem!
     var assertion: Any?
     var knownBundleIDs = Set<String>()
+    var trackedOwners = Set<AppInstance>()
     var busy = false
     var generation = 0
     var autoHide = false
@@ -51,10 +54,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var timer: Timer?
     var menuOpen = false
     var lastError = ""
+    var locationWarning = ""
     let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/IVOLBar.log")
     var observers: [NSObjectProtocol] = []
-    var savedGroup: Set<String>?
-    var configuringGroup = false
+    var configuringGroup = false {
+        didSet { defaults.set(configuringGroup, forKey: "configuringGroup") }
+    }
     var displaySettlesAfter = Date.distantPast
     var recoveryPending = false
     var displaysSleeping = false
@@ -65,7 +70,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard duplicates.count <= 1 else { NSApp.terminate(nil); return }
         defaults.register(defaults: ["autoHide": false, "delay": 5.0])
         autoHide = defaults.bool(forKey: "autoHide")
-        savedGroup = defaults.stringArray(forKey: "hiddenBundleIDs").map { Set($0) }
+        configuringGroup = defaults.bool(forKey: "configuringGroup")
         createStatusItems()
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
         installObservers()
@@ -84,8 +89,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         divider = NSStatusBar.system.statusItem(withLength: 18)
         divider.autosaveName = "IVOLBar.divider"
         divider.button?.title = "│"
-        divider.button?.toolTip = "Настройка сохраняемой группы — через меню. Перемещение само по себе не меняет состав."
-        arrow.button?.toolTip = "Скрыть/раскрыть сохранённую группу. Правая кнопка — настройки."
+        divider.button?.toolTip = "Слева от │ — скрывать, справа — оставлять видимым. Перемещение с ⌘."
+        arrow.button?.toolTip = "Скрыть/раскрыть значки слева от полоски. Стрелка не является границей. Правая кнопка — настройки."
         for item in [divider!, arrow!] {
             item.button?.target = self
             item.button?.action = #selector(clicked(_:))
@@ -101,10 +106,19 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self, self.assertion != nil || self.busy,
                   let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   app.bundleURL?.pathExtension == "app", let id = app.bundleIdentifier,
-                  !self.knownBundleIDs.contains(id) else { return }
-            // The restriction is bundle-based: a known app/helper restarting changes nothing.
-            // Only a new bundle needs a rescan, so its icon is not accidentally restricted.
-            self.log("Новое приложение: \(id); пересчёт группы")
+                  let instance = AppInstance(app) else { return }
+            let replacingOwner = self.trackedOwners.contains { $0.bundleID == id && $0 != instance }
+            guard replacingOwner || !self.knownBundleIDs.contains(id) else { return }
+            // Known helpers with no hosted icon must not repeatedly reveal the bar.
+            self.log("Запуск экземпляра: \(id) pid=\(instance.pid); замена владельца=\(replacingOwner)")
+            self.expand()
+        })
+        observers.append(center.addObserver(forName: NSWorkspace.didTerminateApplicationNotification,
+                                            object: nil, queue: .main) { [weak self] notification in
+            guard let self, self.assertion != nil || self.busy,
+                  let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  self.trackedOwners.contains(where: { $0.pid == app.processIdentifier && $0.bundleID == app.bundleIdentifier }) else { return }
+            self.log("Владелец значка завершён: pid=\(app.processIdentifier); удаление старых привязок")
             self.expand()
         })
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
@@ -172,13 +186,18 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func rebuildStatusItems() {
         recoveryPending = false
         expand()
-        // Detach autosave names before removal so AppKit cannot erase their positions.
+        // Removing/recreating one item can overwrite the other's saved position.
+        // Snapshot both before touching either, then restore before assigning names.
+        let positionKeys = ["NSStatusItem Preferred Position IVOLBar.arrow",
+                            "NSStatusItem Preferred Position IVOLBar.divider"]
+        let positions = positionKeys.compactMap { key in defaults.object(forKey: key).map { (key, $0) } }
         for item in [arrow!, divider!] {
             item.autosaveName = nil
             NSStatusBar.system.removeStatusItem(item)
         }
         arrow = nil
         divider = nil
+        for (key, value) in positions { defaults.set(value, forKey: key) }
         createStatusItems()
         displaySettlesAfter = Date().addingTimeInterval(2)
         resetDeadline()
@@ -189,6 +208,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let a = assertion { IVReleaseVisibility(a) }
         assertion = nil
         knownBundleIDs.removeAll()
+        trackedOwners.removeAll()
         busy = false
         retryAfter = .distantPast
         updateArrow()
@@ -207,7 +227,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard assertion == nil && !busy else { return }
         guard !recoveryPending, !displaysSleeping, Date() >= displaySettlesAfter else { return }
         if configuringGroup && !captureGroup {
-            if manual { alert("Закончите расстановку и выберите «Сохранить группу по расположению» в меню.") }
+            if manual { alert("Выберите «Закончить расстановку» в меню.") }
             return
         }
         guard AXIsProcessTrusted() else {
@@ -227,26 +247,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let own = Bundle.main.bundleIdentifier ?? "pro.ivol.bar"
         knownBundleIDs = Set(records.map(\.id))
-        // Once configured, membership is independent of transient display geometry.
-        // Only an explicit configuration action may replace it.
-        let selectedGroup = captureGroup ? nil : savedGroup
+        // Never apply historical membership outside the visible boundaries.
+        // Display recovery is debounced above; scan only while expanded.
         busy = true
         generation += 1
         let token = generation
         updateArrow()
         DispatchQueue.global(qos: .userInitiated).async {
             let beforeHosted = hostedItems()
-            if let selectedGroup {
-                let runningIDs = Set(records.map(\.id))
-                let hidden = selectedGroup.intersection(runningIDs).subtracting([own])
-                    .filter { !$0.hasPrefix("com.apple.") }
-                let result = Scan(hidden: Set(hidden), allowed: runningIDs.subtracting(hidden),
-                                  lines: ["Сохранённая группа: \(selectedGroup.sorted())"])
-                DispatchQueue.main.async {
-                    self.activate(result, beforeHosted: beforeHosted, token: token, manual: manual)
-                }
-                return
-            }
             let ownItems = (beforeHosted ?? []).filter { $0.owner == own }
             // AppKit status-item windows can refer to the inactive/notched display.
             // Both items have different fixed widths (divider 18, arrow 26 + host padding).
@@ -254,13 +262,16 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard items.count == 2 else { return nil }
                 let sorted = items.sorted { $0.frame.width < $1.frame.width }
                 let left = sorted[0].frame, right = sorted[1].frame
-                guard right.width - left.width > 4, left.maxX <= right.minX + 2 else { return nil }
+                guard right.width - left.width > 4 else { return nil }
                 return (display, left, right)
             }
-            guard let pair = pairs.max(by: { $0.2.minX - $0.1.maxX < $1.2.minX - $1.1.maxX }) else {
+            guard let pair = pairs.max(by: { a, b in
+                (beforeHosted ?? []).filter { $0.display == a.0 }.count <
+                (beforeHosted ?? []).filter { $0.display == b.0 }.count
+            }) else {
                 DispatchQueue.main.async {
                     guard self.generation == token else { return }
-                    self.fail("Не найдена строка меню с полоской слева от стрелки. Расставьте границы с ⌘ на используемом мониторе.", manual: manual)
+                    self.fail("Не удалось определить полоску │ в строке меню. Скрытие отменено; повторите после стабилизации экрана.", manual: manual)
                 }
                 return
             }
@@ -271,25 +282,33 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for app in records {
                 scan.allowed.insert(app.id)
                 guard app.id != own, !app.id.hasPrefix("com.apple."), app.path.hasSuffix(".app") else { continue }
-                let positions = activeItems.filter { $0.owner == app.id }.map(\.frame)
+                let positions = activeItems.filter { $0.owner == app.id && $0.instance.pid == app.pid }.map(\.frame)
                 guard !positions.isEmpty else {
                     outside.insert(app.id)
                     scan.lines.append("UNKNOWN keep \(app.id) \(app.path)")
                     continue
                 }
                 // Boundaries and items now come from the same host window/display.
-                let middle = positions.allSatisfy { $0.minX >= left.maxX - 2 && $0.maxX <= right.minX + 2 }
+                let middle = positions.allSatisfy { $0.maxX <= left.minX + 2 }
                 if middle { scan.hidden.insert(app.id) }
-                else { outside.insert(app.id) }
-                scan.lines.append("\(middle ? "HIDE" : "KEEP") \(app.id) \(positions)")
+                else {
+                    outside.insert(app.id)
+                    if !app.path.hasPrefix("/Applications/") { scan.outsideApplications.append(app.name) }
+                }
+                scan.lines.append("\(middle ? "HIDE" : "KEEP") \(app.id) pid=\(app.pid) path=\(app.path) \(positions)")
             }
             scan.hidden.subtract(outside)
+            // Use one coherent menu bar. Inactive/notched displays can retain
+            // stale or clipped frames and must not veto this display's selection.
             scan.allowed.subtract(scan.hidden)
             scan.allowed.insert(own)
             let result = scan
             DispatchQueue.main.async {
                 guard self.generation == token else { return }
-                self.log("Границы \(left) / \(right)\n" + result.lines.joined(separator: "\n"))
+                self.log("Экран host=\(display); одна граница \(left); стрелка \(right) — только управление\n" + result.lines.joined(separator: "\n"))
+                let names = Array(Set(result.outsideApplications)).sorted()
+                self.locationWarning = names.isEmpty ? "" : "Запущены не из /Applications, macOS скроет их всё равно: " + names.joined(separator: ", ")
+                if !names.isEmpty { self.log("ПРЕДУПРЕЖДЕНИЕ: \(self.locationWarning)") }
                 self.activate(result, beforeHosted: beforeHosted, token: token, manual: manual, captureGroup: captureGroup)
             }
         }
@@ -300,33 +319,41 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.fail("Не удалось прочитать системную строку меню для проверки результата. Скрытие отменено.", manual: manual)
             return
         }
-        let protectedOwners = Set(beforeHosted.map(\.owner)).subtracting(result.hidden)
-        guard !result.hidden.isEmpty else {
-            if captureGroup {
-                self.fail("Между границами не найдена группа. Прежний состав сохранён; настройка остаётся открытой.", manual: manual)
-            } else if savedGroup != nil {
-                busy = false
-                retryAfter = Date().addingTimeInterval(30)
-                updateArrow()
-                if manual { alert("Сохранённая группа пуста или её приложения сейчас не запущены. Состав группы можно изменить через меню.") }
-            } else {
-                self.fail("Группа ещё не настроена. Выберите «Настроить группу по расположению…» в меню.", manual: manual)
-            }
+        let owners = Set(beforeHosted.map(\.instance))
+        guard owners.allSatisfy({ $0.isCurrent }) else {
+            fail("Владелец значка сменился во время чтения. Повторите скрытие после запуска приложения.", manual: manual)
             return
         }
-        IVActivateVisibility(Array(result.allowed).sorted()) { a, error in
+        trackedOwners = owners
+        let protectedOwners = Set(beforeHosted.map(\.owner)).subtracting(result.hidden)
+        guard !result.hidden.isEmpty else {
+            busy = false
+            if captureGroup { configuringGroup = false }
+            retryAfter = Date().addingTimeInterval(5)
+            updateArrow()
+            log("Слева от полоски нет подтверждённых кандидатов: скрытие не применяется")
+            if manual { alert("На выбранной строке меню слева от полоски │ не найдены приложения с определяемым положением. Нужные значки переносите с ⌘ вправо от полоски, остальные оставляйте слева. Для расчёта используется экран с наибольшим числом обнаруженных элементов.") }
+            return
+        }
+        // Include owners hosted by MenuBarAgent even if Workspace omitted them.
+        let allowed = result.allowed.union(protectedOwners)
+        IVActivateVisibility(Array(allowed).sorted()) { a, error in
             guard self.generation == token else { if let a { IVReleaseVisibility(a) }; return }
             guard let a, error == nil else { self.fail(error ?? "Ошибка скрытия", manual: manual); return }
+            guard owners.allSatisfy({ $0.isCurrent }) else {
+                IVReleaseVisibility(a)
+                self.expand()
+                self.log("Смена владельца во время применения: устаревшее ограничение снято")
+                return
+            }
             self.assertion = a
             self.busy = false
             self.lastError = ""
             self.retryAfter = .distantPast
             self.updateArrow()
-            if captureGroup || self.savedGroup == nil {
-                self.savedGroup = result.hidden
-                self.defaults.set(result.hidden.sorted(), forKey: "hiddenBundleIDs")
+            if captureGroup {
                 self.configuringGroup = false
-                self.log("Группа сохранена: \(result.hidden.sorted())")
+                self.log("Расстановка завершена: \(result.hidden.sorted())")
             }
             self.log("Запрос принят macOS (\(manual ? "ручное скрытие" : "автоскрытие")): скрыть=\(result.hidden.sorted()); оставить=\(protectedOwners.sorted()). AX не доказывает видимость — нужна проверка изображения.")
             if ProcessInfo.processInfo.environment["IVOLBAR_DIAGNOSTIC"] == "1" {
@@ -344,12 +371,48 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func beginGroupConfiguration() {
         configuringGroup = true
         expand()
-        alert("Расставьте значки между полоской и стрелкой с ⌘, затем выберите «Сохранить группу по расположению». До сохранения автоскрытие приостановлено, прежний состав не меняется.")
+        alert("Автоскрытие временно приостановлено. С ⌘ перенесите нужные значки вправо от полоски │. Всё, что слева, будет скрываться. Стрелка — только кнопка раскрытия, её положение не влияет на выбор. Затем выберите «Закончить расстановку».")
     }
     @objc func saveGroupConfiguration() { collapse(manual: true, captureGroup: true) }
     @objc func cancelGroupConfiguration() {
         configuringGroup = false
         resetDeadline()
+    }
+    @objc func resetSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        let confirmation = NSAlert()
+        confirmation.alertStyle = .warning
+        confirmation.messageText = "Сбросить IVOL Bar?"
+        confirmation.informativeText = "Будут удалены настройки IVOL Bar. Все значки раскроются.\n\nНа macOS 27 положение стрелки и полоски хранит сама система, поэтому на строке меню они могут остаться на прежних местах. Положения других приложений и разрешения macOS не изменятся. После сброса перенесите нужные значки вправо от │ и выберите «Закончить расстановку». До этого автоскрытие приостановлено, в том числе после перезапуска. Затем задержка составит 5 секунд."
+        confirmation.addButton(withTitle: "Отмена")
+        confirmation.addButton(withTitle: "Сбросить")
+        menuOpen = true
+        let response = confirmation.runModal()
+        menuOpen = false
+        resetDeadline()
+        guard response == .alertSecondButtonReturn else { return }
+
+        configuringGroup = true
+        expand() // Invalidates pending callbacks and releases the native restriction.
+        for item in [arrow!, divider!] {
+            item.autosaveName = nil
+            NSStatusBar.system.removeStatusItem(item)
+        }
+        arrow = nil
+        divider = nil
+        // Clear after removal: AppKit can write positions while removing an item.
+        defaults.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "pro.ivol.bar")
+        defaults.set(true, forKey: "autoHide")
+        defaults.set(5.0, forKey: "delay")
+        defaults.set(true, forKey: "introduced")
+        configuringGroup = true
+        autoHide = true
+        lastError = ""
+        createStatusItems()
+        displaySettlesAfter = Date().addingTimeInterval(2)
+        resetDeadline()
+        log("Сброшены настройки и собственные позиции IVOL Bar; ожидание новой расстановки")
+        alert("Сброс выполнен. С ⌘ перенесите Cataloger и другие нужные значки вправо от полоски │, скрываемые оставьте слева. Затем выберите «Закончить расстановку». До этого значки не будут автоматически сворачиваться.")
     }
     func alert(_ message: String) {
         NSApp.activate(ignoringOtherApps: true)
@@ -363,7 +426,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         resetDeadline()
     }
     @objc func instructions() {
-        alert("Группа сохраняется независимо от сна и расположения экранов. Стрелка скрывает/раскрывает сохранённую группу; правая кнопка открывает меню.\n\nДля изменения состава: «Настроить группу по расположению…», расставьте значки с ⌘ между полоской слева и стрелкой справа, затем «Сохранить группу по расположению». Простое перемещение значков вне режима настройки не меняет состав. Системные значки не скрываются. Если при настройке хотя бы один значок приложения снаружи, приложение остаётся видимым.")
+        alert("Скрываемые значки → │ → всегда видимые значки.\n\nРаскройте всё стрелкой. С ⌘ перенесите нужные значки вправо от полоски, остальные оставьте слева. Нажмите стрелку — левая часть скроется. Стрелка не является второй границей и может стоять с любой стороны. Список отдельно сохранять не нужно.\n\nДля расстановки без таймера выберите «Настроить группу по расположению…», затем «Закончить расстановку». Системные значки и IVOL Bar остаются доступными. Если хотя бы один значок приложения справа, всё приложение остаётся разрешённым. При неизвестном положении скрытие этого приложения не применяется.")
     }
     @objc func toggleAuto() {
         autoHide.toggle()
@@ -387,7 +450,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         _ = add("Показать всё", #selector(reveal))
         if configuringGroup {
-            _ = add("Сохранить группу по расположению", #selector(saveGroupConfiguration))
+            _ = add("Закончить расстановку", #selector(saveGroupConfiguration))
             _ = add("Отменить настройку группы", #selector(cancelGroupConfiguration))
         } else {
             _ = add("Настроить группу по расположению…", #selector(beginGroupConfiguration))
@@ -405,7 +468,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         _ = add("Как пользоваться", #selector(instructions))
         _ = add("Открыть диагностику", #selector(openLog))
+        _ = add("Сбросить настройки и расстановку IVOL Bar…", #selector(resetSettings))
         if !lastError.isEmpty { let item = NSMenuItem(title: "Последняя ошибка: \(lastError)", action: nil, keyEquivalent: ""); menu.addItem(item) }
+        if !locationWarning.isEmpty { menu.addItem(NSMenuItem(title: locationWarning, action: nil, keyEquivalent: "")) }
         _ = add("Завершить IVOL Bar", #selector(quit))
         if let button = arrow.button { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button) }
     }

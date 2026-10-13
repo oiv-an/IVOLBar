@@ -12,6 +12,14 @@ Always visible    │    Collapsible icons    ‹    Always visible
 
 > **Experimental — macOS 27, Apple Silicon.** Tested on macOS 27.0.1 (arm64). IVOL Bar uses an undocumented Apple framework. macOS updates can break it. The first release is ad-hoc signed, **not Developer ID signed or notarized**. It is not an App Store application.
 
+## Reset
+
+Right-click the arrow → **«Сбросить настройки и расстановку IVOL Bar…»** → **«Сбросить»**. Cancel leaves preferences unchanged.
+
+Reset releases hiding, clears IVOL Bar preferences and historical lists, and recreates its arrow/divider. On macOS 27 the system itself keeps their positions, so they may reappear in the same places. It does not clear other apps' positions, macOS permissions, login items or diagnostic logs.
+
+Command-drag icons you want to keep to the right of │, then choose **«Закончить расстановку»**. Auto-hide stays paused across restarts until arrangement is finished or explicitly cancelled; afterward it is enabled with a five-second delay.
+
 ## Features
 
 - Hide the group between a divider and an arrow; keep both sides visible.
@@ -34,7 +42,7 @@ Older macOS versions are not supported. Availability of the private framework is
 
 ## Install the release
 
-1. Download `IVOL-Bar-0.1.3-macos-arm64.zip` and `SHA256SUMS.txt` from [Releases](https://github.com/oiv-an/IVOLBar/releases/latest).
+1. Download `IVOL-Bar-0.1.4-macos-arm64.zip` and `SHA256SUMS.txt` from [Releases](https://github.com/oiv-an/IVOLBar/releases/latest).
 2. Optionally verify the archive in the download folder:
 
    ```sh
@@ -108,16 +116,16 @@ On an Apple Silicon Mac with the required toolchain:
 /bin/zsh scripts/package-release.sh
 ```
 
-This makes a fresh, ad-hoc-signed build and writes a ZIP and SHA-256 checksum to `dist/0.1.3/`. It neither installs the result nor uploads anything. See [release checklist](docs/RELEASING.md).
+This makes a fresh, ad-hoc-signed build and writes a ZIP and SHA-256 checksum to `dist/0.1.4/`. It neither installs the result nor uploads anything. See [release checklist](docs/RELEASING.md).
 
 ## Usage
 
-Before changing membership, open the menu → **Настроить группу по расположению…** (Configure group from positions). Auto-hide pauses until you save or cancel.
+**Left of the divider: hide. Right of the divider: keep visible.** The arrow is only a toggle, not a second boundary. No membership list needs saving.
 
-1. Hold **⌘ Command** and drag the **│** divider to the left of the **‹** arrow.
-2. Drag the icons you want to hide **between** the two markers.
-3. Leave important icons outside this group on either side.
-4. Choose **Сохранить группу по расположению** (Save group from positions). Then click the arrow to hide or reveal the saved group. The arrow changes direction when collapsed.
+1. Expand using the arrow. For timer-free arrangement, choose **Настроить группу по расположению…**.
+2. Hold **⌘ Command** and drag important icons **right of │**.
+3. Leave other icons **left of │**. You can also move the divider with Command.
+4. Click the arrow, or **Закончить расстановку** (Finish arranging) if configuring. Identified third-party applications on the left are hidden; system items and IVOL Bar remain allowed.
 5. Click the divider, or right-click the arrow, to open the menu:
    - **Показать всё** — Show all.
    - **Автоскрытие после ухода мыши** — Auto-hide after the pointer leaves.
@@ -130,19 +138,20 @@ The application UI currently uses Russian labels; this guide includes their Engl
 
 Auto-hide waits while the pointer is in a menu bar, a mouse button or Command is held, or IVOL Bar's own menu is open. Hovering does not expand the group. If hiding fails, the preference stays enabled and automatic retry waits at least 30 seconds. Manual retry remains available.
 
-Exiting or relaunching a previously known application does not expand the group. A newly encountered application, sleep/wake, or a display change releases the restriction for safety; after the displays settle, auto-hide reuses the saved membership rather than transient coordinates. Membership survives relaunches; newly encountered apps are not added automatically. The diagnostic environment variable `IVOLBAR_DIAGNOSTIC=1` deliberately expands after five seconds; do not use it for normal operation.
+Exiting or relaunching a known application does not expand the group. A new application, sleep/wake or display change releases the restriction for safety. After displays settle, membership is recalculated from expanded positions; historical membership is not applied. Diagnostic mode deliberately expands after five seconds and is not intended for normal use.
 
 ## How it works and limitations
 
-IVOL Bar reads hosted status-item geometry from macOS's MenuBarAgent using Accessibility. It identifies the two markers on one display and uses the private MenuBarClientCore assessment-mode mechanism to allow applications outside the group while restricting those inside it.
+IVOL Bar reads hosted geometry from MenuBarAgent using Accessibility, identifies the divider separately from the arrow, and uses private MenuBarClientCore to restrict selected applications on the left while allowing others.
 
 Important limitations:
 
-- **Per application, not per individual icon.** When saving a group, if an application has multiple icons and any is outside the group, the application is kept visible.
+- **Apps must run from /Applications.** macOS 27 matches allowed apps by their LaunchServices registration. An app running from another location (a VS Code extension folder, Xcode DerivedData, a build directory) is hidden even when it sits right of the divider. IVOL Bar lists such apps in its menu. Copy the app to /Applications and launch it from there.
+- **Per application, not per individual icon.** If any icon is right of the divider, the whole application remains allowed.
 - System menu items are requested to remain visible; private system behavior may still differ between macOS versions.
-- Updates, changed paths and duplicate installations of other apps do not block the entire group from collapsing. Membership is persisted by bundle identifier without installation-path bindings. Geometry is used only for initial selection and explicitly saving a new group; sleep and system-driven marker movement do not change membership. However, macOS can still hide a conflicting copy outside the group. Expand using the arrow to access it. Dragging sets a new position but does not by itself guarantee resolution of the system's duplicate-app conflict.
+- Membership is calculated before each collapse from marker positions, without installation-path bindings. Old membership preferences are retained but ignored. The private macOS mechanism can still hide a conflicting application copy outside the group; expand to access it. Moving icons does not resolve system duplicate-copy conflicts.
 - Compatibility is not universal. Unexpected disappearing icons have been observed with some third-party utilities, including noTunes. Do not depend on IVOL Bar to keep a critical control visible without checking it yourself.
-- Independent per-display layouts are not supported. During configuration, the app selects a valid pair of markers with the largest gap. Saved membership is shared across displays. IVOL Bar does not restore the physical macOS icon order; it preserves the selected hiding membership. Notched displays and unusual multi-monitor arrangements may prevent a valid group being found.
+- Independent per-display hiding is not supported. Membership comes only from the menu bar with the most detected items. Other displays do not veto selection, but the system restriction applies globally. Unknown geometry on the selected display excludes an application. IVOL Bar does not restore other applications' physical icon order.
 - IVOL Bar protects its own open menu from auto-hide; arbitrary third-party menus are not guaranteed to be protected.
 - Private API success and retained Accessibility nodes do not prove what is visible. Always visually inspect your layout after installation or a macOS update.
 
@@ -154,7 +163,7 @@ Use **Show all** or quit IVOL Bar to release its visibility restriction. Do not 
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Nothing hides                           | Accessibility permission; divider left of arrow; third-party icons between them; last error in the menu               |
 | Auto-hide does not run                  | Enable it in the menu; move the pointer away; release mouse/Command; close the app's menu; allow the configured delay |
-| Icons unexpectedly disappear            | Show all or quit; check duplicate app installations and the limitations above                                         |
+| Icons unexpectedly disappear            | Is the app running from /Applications? Check the warning in IVOL Bar's menu; then duplicate installations             |
 | Permission stopped working after update | Keep the same app path and signing identity where possible; re-enable Accessibility in System Settings if necessary   |
 | Build fails after moving the project    | Select the correct SDK/toolchain and use a fresh output directory; compiler caches can contain absolute paths         |
 | A download is blocked                   | Review the unnotarized-release warning; use macOS's per-app Open Anyway only if you trust it, or build locally        |
